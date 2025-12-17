@@ -1,0 +1,12 @@
+.{
+    .name = .zlamb,
+    .version = "0.0.0",
+    .fingerprint = 0x3e4af341d748855f, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0-dev.1456+16fc083f2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
