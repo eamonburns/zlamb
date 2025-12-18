@@ -61,9 +61,6 @@ const Allocator = std.mem.Allocator;
 //     int n = vsnprintf(NULL, 0, fmt, args);
 //     va_end(args);
 //
-//     // NOTE: the new_capacity needs to be +1 because of the null terminator.
-//     // However, further below we increase sb->count by n, not n + 1.
-//     // This is because we don't want the sb to include the null terminator. The user can always sb_append_null() if they want it
 //     da_reserve(sb, sb->count + n + 1);
 //     char *dest = sb->items + sb->count;
 //     va_start(args, fmt);
@@ -75,14 +72,13 @@ const Allocator = std.mem.Allocator;
 //     return n;
 // }
 
+// ===== AST ===== //
+
 const ExprKind = enum {
     variable,
     function,
     application,
 };
-
-// TODO: (below)
-// typedef struct Expr Expr;
 
 const VariableName = struct {
     name: []const u8,
@@ -145,7 +141,6 @@ const Expr = struct {
         var expr = gpa.create(Expr) catch @panic("OOM");
         expr.kind = .variable;
         expr.as = .{ .variable = .free(name) };
-        // expr.as.variable = .free(name);
         return expr;
     }
 
@@ -156,8 +151,6 @@ const Expr = struct {
             .arg = .free(arg),
             .body = body,
         } };
-        // expr.as.function.arg = .free(arg);
-        // expr.as.function.body = body;
         return expr;
     }
 
@@ -168,8 +161,6 @@ const Expr = struct {
             .arg = arg,
             .body = body,
         } };
-        // expr.as.function.arg = arg;
-        // expr.as.function.body = body;
         return expr;
     }
 
@@ -180,8 +171,6 @@ const Expr = struct {
             .lhs = lhs,
             .rhs = rhs,
         } };
-        // expr.as.application.lhs = lhs;
-        // expr.as.application.rhs = rhs;
         return expr;
     }
 
@@ -283,6 +272,8 @@ const Expr = struct {
 //     default: unreachable;
 //     }
 // }
+
+// ===== Evaluation ===== //
 
 // TODO: Should these functions be associated with a namespace/struct?
 
@@ -480,20 +471,21 @@ fn bind_variables(expr: *Expr) *Expr {
 //     }
 // }
 
-test "AST and evaluation" {
+test "AST and evaluation" { // TODO: I should probably make this test more thorough
+    const expectEqual = std.testing.expectEqual;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
     // ((\x.\y.x) then) else
     var expr: *Expr = .application(gpa, .application(gpa, .function(gpa, "x", .function(gpa, "y", .variable(gpa, "x"))), .variable(gpa, "then")), .variable(gpa, "else"));
-    std.debug.print("{f}\n", .{expr});
+    try expectEqual(ExprKind.application, expr.kind);
     expr = eval1(gpa, expr);
-    std.debug.print("{f}\n", .{expr});
+    try expectEqual(ExprKind.application, expr.kind);
     expr = eval1(gpa, expr);
-    std.debug.print("{f}\n", .{expr});
+    try expectEqual(ExprKind.variable, expr.kind);
 }
 
-// ===== Tokenization =====
+// ===== Tokenization ===== //
 
 const TokenKind = enum {
     invalid,
@@ -565,7 +557,6 @@ const Lexer = struct {
     /// Kind of current token
     token: TokenKind,
     /// Name of current token
-    // name: std.ArrayList(u8), // NOTE: I don't think I even need this to be an ArrayList. I think I can just make it a sub-slice of `content`
     name: []const u8,
     /// Row of current token
     row: usize,
@@ -656,22 +647,18 @@ const Lexer = struct {
         }
 
         if (std.ascii.isAlphanumeric(x)) {
-            const start = l.cursor.pos - 1; // FIXME: I don't like the (pos - 1) for both indexes
+            const start = l.cursor.pos - 1; // FIXME: I don't like the (pos - 1)
             l.token = .name;
-            while (l.nextChar()) |c| {
+            while (l.currChar()) |c| {
                 if (!std.ascii.isAlphanumeric(c)) break;
+                _ = l.nextChar();
             }
-            l.name = l.content[start .. l.cursor.pos - 1];
-            // l.name.shrinkRetainingCapacity(0);
-            // try l.name.append(l.gpa, x);
-            //
-            // while (std.ascii.isAlphanumeric(l.currChar() orelse 0)) {
-            //     try l.name.append(l.gpa, l.nextChar() orelse @panic("This should never happen"));
-            // }
+            l.name = l.content[start..l.cursor.pos]; // NOTE: I might want to duplicate this instead of slicing
             return true;
         }
 
-        // TODO: Invalid
+        l.token = .invalid;
+        std.debug.print("{f}error: Unknown token starting with '{c}'\n", .{ std.fmt.alt(l.*, .printLoc), x });
         return false;
     }
 
@@ -815,7 +802,7 @@ test "tokenization" {
     try expectEqualSlices(u8, "else", l.name);
 }
 
-// TODO: ===== Parsing =====
+// TODO: ===== Parsing ===== //
 
 // Expr *parse_expr(Lexer *l);
 
