@@ -480,7 +480,7 @@ fn bind_variables(expr: *Expr) *Expr {
 //     }
 // }
 
-test "things" {
+test "AST and evaluation" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
@@ -493,7 +493,28 @@ test "things" {
     std.debug.print("{f}\n", .{expr});
 }
 
-// TODO: Tokenization and parsing
+// ===== Tokenization =====
+
+const TokenKind = enum {
+    invalid,
+    end,
+    // Opening parentheses '('
+    oparen,
+    // Closing parentheses ')'
+    cparen,
+    // Start of lambda '\'
+    lambda,
+    dot,
+    colon,
+    name,
+
+    pub fn format(
+        self: TokenKind,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        try writer.print("{t}", .{self});
+    }
+};
 
 // typedef enum {
 //     TOKEN_INVALID,
@@ -505,7 +526,7 @@ test "things" {
 //     TOKEN_COLON,
 //     TOKEN_NAME,
 // } Token_Kind;
-//
+
 // const char *token_kind_display(Token_Kind kind)
 // {
 //     switch (kind) {
@@ -520,11 +541,157 @@ test "things" {
 //     default: unreachable);
 //     }
 // }
-//
+
+/// All fields are 0-indexed
+const Cursor = struct {
+    /// Position
+    pos: usize,
+    /// Beginning of line
+    bol: usize,
+    /// Row
+    row: usize,
+};
+
 // typedef struct {
 //     size_t pos, bol, row;
 // } Cur;
-//
+
+const Lexer = struct {
+    content: []const u8,
+    file_path: ?[]const u8 = null,
+
+    cursor: Cursor,
+
+    /// Kind of current token
+    token: TokenKind,
+    /// Name of current token
+    // name: std.ArrayList(u8), // NOTE: I don't think I even need this to be an ArrayList. I think I can just make it a sub-slice of `content`
+    name: []const u8,
+    /// Row of current token
+    row: usize,
+    /// Column of current token
+    col: usize,
+
+    gpa: Allocator,
+
+    pub fn init(gpa: Allocator, file_path: ?[]const u8, content: []const u8) Lexer {
+        return .{
+            .content = content,
+            .file_path = file_path,
+            .gpa = gpa,
+
+            .cursor = .{
+                .pos = 0,
+                .row = 0,
+                .bol = 0,
+            },
+
+            .token = undefined,
+            .name = undefined,
+            .row = undefined,
+            .col = undefined,
+        };
+    }
+
+    pub fn printLoc(
+        l: Lexer,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        if (l.file_path) |path| try writer.print("{s}:", .{path});
+        try writer.print("{d}:{d}: ", .{ l.row, l.col });
+    }
+
+    pub fn currChar(l: *Lexer) ?u8 {
+        if (l.cursor.pos >= l.content.len) return null;
+        return l.content[l.cursor.pos];
+    }
+
+    pub fn nextChar(l: *Lexer) ?u8 {
+        if (l.cursor.pos >= l.content.len) return null;
+        const x = l.currChar();
+        l.cursor.pos += 1;
+        if (x == '\n') {
+            l.cursor.row += 1;
+            l.cursor.bol = l.cursor.pos;
+        }
+        return x;
+    }
+
+    pub fn next(l: *Lexer) bool {
+        while (std.ascii.isWhitespace(l.currChar() orelse 0)) {
+            _ = l.nextChar();
+        }
+
+        // Get location of start of current token, 1-indexed
+        l.row = l.cursor.row + 1;
+        l.col = l.cursor.pos - l.cursor.bol + 1;
+
+        const x = l.nextChar() orelse {
+            l.token = .end;
+            return true;
+        };
+
+        switch (x) {
+            '(' => {
+                l.token = .oparen;
+                return true;
+            },
+            ')' => {
+                l.token = .cparen;
+                return true;
+            },
+            '\\' => {
+                l.token = .lambda;
+                return true;
+            },
+            '.' => {
+                l.token = .dot;
+                return true;
+            },
+            ':' => {
+                l.token = .colon;
+                return true;
+            },
+            else => {}, // Handle other case below
+        }
+
+        if (std.ascii.isAlphanumeric(x)) {
+            const start = l.cursor.pos - 1; // FIXME: I don't like the (pos - 1) for both indexes
+            l.token = .name;
+            while (l.nextChar()) |c| {
+                if (!std.ascii.isAlphanumeric(c)) break;
+            }
+            l.name = l.content[start .. l.cursor.pos - 1];
+            // l.name.shrinkRetainingCapacity(0);
+            // try l.name.append(l.gpa, x);
+            //
+            // while (std.ascii.isAlphanumeric(l.currChar() orelse 0)) {
+            //     try l.name.append(l.gpa, l.nextChar() orelse @panic("This should never happen"));
+            // }
+            return true;
+        }
+
+        // TODO: Invalid
+        return false;
+    }
+
+    pub fn peek(l: *Lexer) bool {
+        const saved = l.cursor;
+        const result = l.next();
+        l.cursor = saved;
+        return result;
+    }
+
+    pub fn expect(l: *Lexer, expected: TokenKind) bool {
+        if (!l.next()) return false;
+        if (l.token != expected) {
+            std.debug.print("{f}error: Unexpected token '{f}'\n", .{ std.fmt.alt(l.*, .printLoc), l.token });
+            return false;
+        }
+        return true;
+    }
+};
+
 // typedef struct {
 //     const char *content;
 //     size_t count;
@@ -536,19 +703,19 @@ test "things" {
 //     String_Builder name;
 //     size_t row, col;
 // } Lexer;
-//
+
 // void lexer_print_loc(Lexer *l, FILE *stream)
 // {
 //     if (l->file_path) fprintf(stream, "%s:", l->file_path);
 //     fprintf(stream, "%zu:%zu: ", l->row, l->col);
 // }
-//
+
 // char lexer_curr_char(Lexer *l)
 // {
 //     if (l->cur.pos >= l->count) return 0;
 //     return l->content[l->cur.pos];
 // }
-//
+
 // char lexer_next_char(Lexer *l)
 // {
 //     if (l->cur.pos >= l->count) return 0;
@@ -559,7 +726,7 @@ test "things" {
 //     }
 //     return x;
 // }
-//
+
 // bool lexer_next(Lexer *l)
 // {
 //     while (isspace(lexer_curr_char(l))) {
@@ -600,7 +767,7 @@ test "things" {
 //     fprintf(stderr, "ERROR: Unknown token starts with `%c`\n", x);
 //     return false;
 // }
-//
+
 // bool lexer_peek(Lexer *l)
 // {
 //     Cur saved = l->cur;
@@ -608,7 +775,7 @@ test "things" {
 //     l->cur = saved;
 //     return result;
 // }
-//
+
 // bool lexer_expect(Lexer *l, Token_Kind expected)
 // {
 //     if (!lexer_next(l)) return false;
@@ -619,9 +786,39 @@ test "things" {
 //     }
 //     return true;
 // }
-//
+
+test "tokenization" {
+    const expect = std.testing.expect;
+    const expectEqualSlices = std.testing.expectEqualSlices;
+    const gpa = std.testing.allocator;
+    const content =
+        \\:(\x. \y.x) then else"
+    ;
+    var l: Lexer = .init(gpa, null, content);
+
+    try expect(l.expect(.colon)); //- :
+    try expect(l.expect(.oparen)); // (
+    try expect(l.expect(.lambda)); // \
+    try expect(l.expect(.name)); //-- x
+    try expectEqualSlices(u8, "x", l.name);
+    try expect(l.expect(.dot)); //--- .
+    try expect(l.expect(.lambda)); // \
+    try expect(l.expect(.name)); //-- y
+    try expectEqualSlices(u8, "y", l.name);
+    try expect(l.expect(.dot)); //--- .
+    try expect(l.expect(.name)); //-- x
+    try expectEqualSlices(u8, "x", l.name);
+    try expect(l.expect(.cparen)); // )
+    try expect(l.expect(.name)); //-- then
+    try expectEqualSlices(u8, "then", l.name);
+    try expect(l.expect(.name)); //-- else
+    try expectEqualSlices(u8, "else", l.name);
+}
+
+// TODO: ===== Parsing =====
+
 // Expr *parse_expr(Lexer *l);
-//
+
 // Expr *parse_fun(Lexer *l)
 // {
 //     if (!lexer_expect(l, TOKEN_NAME)) return NULL;
@@ -678,7 +875,6 @@ test "things" {
 //     }
 //     return lhs;
 // }
-//
 //
 // typedef struct {
 //     const char *name;
