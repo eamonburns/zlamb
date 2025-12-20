@@ -430,7 +430,7 @@ fn bind_variable(body: *Expr, variable: VariableName) void {
 //     }
 // }
 
-var id_counter = 1;
+var id_counter: usize = 1;
 fn bind_variables(expr: *Expr) *Expr {
     switch (expr.kind) {
         .variable => return expr,
@@ -806,6 +806,34 @@ test "tokenization" {
 
 // Expr *parse_expr(Lexer *l);
 
+fn parse_function(gpa: Allocator, l: *Lexer) ?*Expr {
+    if (!l.expect(.name)) return null;
+    const arg = gpa.dupe(u8, l.name) catch @panic("OOM");
+    if (!l.expect(.dot)) {
+        gpa.free(arg);
+        return null;
+    }
+
+    var a: TokenKind = undefined;
+    var b: TokenKind = undefined;
+    {
+        const saved = l.cursor;
+        defer l.cursor = saved;
+
+        if (!l.next()) return null;
+        a = l.token;
+        if (!l.next()) return null;
+        b = l.token;
+    }
+
+    const body: ?*Expr = if (a == .name and b == .dot)
+        parse_function(gpa, l)
+    else
+        parse_expr(gpa, l);
+
+    return .function(gpa, arg, body orelse return null);
+}
+
 // Expr *parse_fun(Lexer *l)
 // {
 //     if (!lexer_expect(l, TOKEN_NAME)) return NULL;
@@ -829,7 +857,24 @@ test "tokenization" {
 //     if (!body) return NULL;
 //     return fun(arg, body);
 // }
-//
+
+fn parse_primary(gpa: Allocator, l: *Lexer) ?*Expr {
+    if (!l.next()) return null;
+    switch (l.token) {
+        .oparen => {
+            const expr = parse_expr(gpa, l) orelse return null;
+            if (!l.expect(.cparen)) return null;
+            return expr;
+        },
+        .lambda => return parse_function(gpa, l),
+        .name => return .variable(gpa, gpa.dupe(u8, l.name) catch @panic("OOM")),
+        else => {
+            std.debug.print("{f}error: unexpected token '{f}'\n", .{ std.fmt.alt(l.*, .printLoc), l.token });
+            return null;
+        },
+    }
+}
+
 // Expr *parse_primary(Lexer *l)
 // {
 //     if (!lexer_next(l)) return NULL;
@@ -848,7 +893,18 @@ test "tokenization" {
 //         return NULL;
 //     }
 // }
-//
+
+fn parse_expr(gpa: Allocator, l: *Lexer) ?*Expr {
+    var lhs = parse_primary(gpa, l) orelse return null;
+    if (!l.peek()) return null;
+    while (l.token != .cparen and l.token != .end) {
+        const rhs = parse_primary(gpa, l) orelse return null;
+        lhs = .application(gpa, lhs, rhs);
+        if (!l.peek()) return null;
+    }
+    return lhs;
+}
+
 // Expr *parse_expr(Lexer *l)
 // {
 //     Expr *lhs = parse_primary(l);
@@ -922,7 +978,7 @@ test "tokenization" {
 //     printf(" W-W'\n");
 //     printf("Enter :help for more info\n");
 //     for (;;) {
-//         printf("𝛌> ");
+//         printf("λ> ");
 //         fflush(stdout);
 //         if (!fgets(buffer, sizeof(buffer), stdin)) break;
 //         const char *source = buffer;
@@ -990,7 +1046,45 @@ test "tokenization" {
 //     return 0;
 // }
 
-pub fn main() !void {}
+pub fn main() !void {
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer assert(debug_allocator.deinit() == .ok);
+    const gpa = debug_allocator.allocator();
+
+    var stdin_buf: [1024]u8 = undefined;
+    var stdin = std.fs.File.stdin().reader(&stdin_buf);
+    const input = &stdin.interface;
+
+    var expr_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer expr_arena.deinit();
+    const expr_gpa = expr_arena.allocator();
+    while (true) {
+        std.debug.print("λ> ", .{});
+        const line = try input.takeDelimiter('\n') orelse break;
+        defer _ = expr_arena.reset(.retain_capacity);
+        var l: Lexer = .init(gpa, null, line);
+
+        var expr = parse_expr(expr_gpa, &l) orelse {
+            std.debug.print("-> <null>\n", .{});
+            continue;
+        };
+        _ = bind_variables(expr);
+        std.debug.print("-> {f}\n", .{expr});
+
+        const limit = 20;
+        var i: usize = 0;
+        var expr1 = eval1(expr_gpa, expr);
+        while ((limit == 0 or i < limit) and expr1 != expr) : (i += 1) {
+            expr = expr1;
+            std.debug.print("-> {f}\n", .{expr});
+            expr1 = eval1(expr_gpa, expr);
+        }
+        if (expr1 != expr) {
+            std.debug.print("...\n", .{});
+        }
+    }
+    std.debug.print("\n", .{});
+}
 
 // Copyright 2025 Alexey Kutepov <reximkut@gmail.com>
 //
