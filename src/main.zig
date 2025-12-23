@@ -12,6 +12,7 @@ pub const std_options: std.Options = .{
 };
 
 const lined = @import("lined");
+const LambdaWriter = @import("LambdaWriter.zig");
 
 // TODO: I think this can be replaced by a std function
 // char *copy_string(const char *s)
@@ -1056,9 +1057,11 @@ pub fn main() !void {
     var stdin = std.fs.File.stdin().reader(&stdin_buf);
     var stderr_buf: [1024]u8 = undefined;
     var stderr = std.fs.File.stderr().writer(&stderr_buf);
+    var lambda_buf: [1024]u8 = undefined;
+    var lambda_writer: LambdaWriter = .init(&stderr.interface, &lambda_buf);
 
     const input = &stdin.interface;
-    const output = &stderr.interface;
+    const output = &lambda_writer.interface;
 
     var expr_arena: std.heap.ArenaAllocator = .init(gpa);
     defer expr_arena.deinit();
