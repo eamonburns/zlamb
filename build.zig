@@ -9,6 +9,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const lined_mod = b.dependency("lined", .{}).module("lined");
+
     const exe = b.addExecutable(.{
         .name = "zlamb",
         .root_module = b.createModule(.{
@@ -17,6 +19,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zlamb", .module = mod },
+                .{ .name = "lined", .module = lined_mod },
             },
         }),
     });

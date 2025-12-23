@@ -3,7 +3,12 @@
     .version = "0.0.0",
     .fingerprint = 0x3e4af341d748855f, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.2",
-    .dependencies = .{},
+    .dependencies = .{
+        .lined = .{
+            .url = "git+https://github.com/eamonburns/lined.git?ref=v0.1.1#0f8d94815976cb73024218d7d89469d57d6f97d6",
+            .hash = "lined-0.1.1-qp3yZfZ3AAAdRZw0rb7kk-6cOPTIjIkn29NRSOefWfGj",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

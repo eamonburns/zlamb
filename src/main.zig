@@ -1,16 +1,17 @@
+//! ,---@z
+//!  W-W'
+
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-// ,---@.
-//  W-W'
-// cc -pedantic -std=c99 -o lamb lamb.c
-// #include <assert.h>
-// #include <stdio.h>
-// #include <stdlib.h>
-// #include <stdbool.h>
-// #include <stdarg.h>
-// #include <string.h>
-// #include <ctype.h>
+
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        .{ .scope = .lined, .level = .err },
+    },
+};
+
+const lined = @import("lined");
 
 // TODO: I think this can be replaced by a std function
 // char *copy_string(const char *s)
@@ -1053,14 +1054,22 @@ pub fn main() !void {
 
     var stdin_buf: [1024]u8 = undefined;
     var stdin = std.fs.File.stdin().reader(&stdin_buf);
+    var stderr_buf: [1024]u8 = undefined;
+    var stderr = std.fs.File.stderr().writer(&stderr_buf);
+
     const input = &stdin.interface;
+    const output = &stderr.interface;
 
     var expr_arena: std.heap.ArenaAllocator = .init(gpa);
     defer expr_arena.deinit();
     const expr_gpa = expr_arena.allocator();
     while (true) {
         std.debug.print("λ> ", .{});
-        const line = try input.takeDelimiter('\n') orelse break;
+        const line = try lined.editLine(gpa, input, output);
+        defer gpa.free(line);
+
+        if (line.len == 0) break;
+
         defer _ = expr_arena.reset(.retain_capacity);
         var l: Lexer = .init(gpa, null, line);
 
@@ -1076,7 +1085,7 @@ pub fn main() !void {
         var expr1 = eval1(expr_gpa, expr);
         while ((limit == 0 or i < limit) and expr1 != expr) : (i += 1) {
             expr = expr1;
-            std.debug.print("-> {f}\n", .{expr});
+            std.debug.print(" > {f}\n", .{expr});
             expr1 = eval1(expr_gpa, expr);
         }
         if (expr1 != expr) {
