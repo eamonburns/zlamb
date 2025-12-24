@@ -14,66 +14,6 @@ pub const std_options: std.Options = .{
 const lined = @import("lined");
 const LambdaWriter = @import("LambdaWriter.zig");
 
-// TODO: I think this can be replaced by a std function
-// char *copy_string(const char *s)
-// {
-//     int n = strlen(s);
-//     char *ds = malloc(n + 1);
-//     assert(ds);
-//     memcpy(ds, s, n);
-//     ds[n] = '\0';
-//     return ds;
-// }
-
-// #define DA_INIT_CAP 256
-// #define da_reserve(da, expected_capacity)                                                  \
-//     do {                                                                                   \
-//         if ((expected_capacity) > (da)->capacity) {                                        \
-//             if ((da)->capacity == 0) {                                                     \
-//                 (da)->capacity = DA_INIT_CAP;                                              \
-//             }                                                                              \
-//             while ((expected_capacity) > (da)->capacity) {                                 \
-//                 (da)->capacity *= 2;                                                       \
-//             }                                                                              \
-//             (da)->items = realloc((da)->items, (da)->capacity * sizeof(*(da)->items));     \
-//             assert((da)->items != NULL && "Buy more RAM lol");                             \
-//         }                                                                                  \
-//     } while (0)
-//
-// #define da_append(da, item)                  \
-//     do {                                     \
-//         da_reserve((da), (da)->count + 1);   \
-//         (da)->items[(da)->count++] = (item); \
-//     } while (0)
-
-// #define sb_append_null(sb) da_append(sb, 0)
-
-// TODO : Replace String_Builder with std.ArrayList(u8) (or maybe Io.Writer.Allocating?)
-// typedef struct {
-//     char *items;
-//     size_t count;
-//     size_t capacity;
-// } String_Builder;
-
-// int sb_appendf(String_Builder *sb, const char *fmt, ...)
-// {
-//     va_list args;
-//
-//     va_start(args, fmt);
-//     int n = vsnprintf(NULL, 0, fmt, args);
-//     va_end(args);
-//
-//     da_reserve(sb, sb->count + n + 1);
-//     char *dest = sb->items + sb->count;
-//     va_start(args, fmt);
-//     vsnprintf(dest, n+1, fmt, args);
-//     va_end(args);
-//
-//     sb->count += n;
-//
-//     return n;
-// }
-
 // ===== AST ===== //
 
 const ExprKind = enum {
@@ -907,68 +847,56 @@ fn parse_expr(gpa: Allocator, l: *Lexer) ?*Expr {
     return lhs;
 }
 
-// Expr *parse_expr(Lexer *l)
-// {
-//     Expr *lhs = parse_primary(l);
-//     if (!lhs) return NULL;
-//     if (!lexer_peek(l)) return NULL;
-//     while (l->token != TOKEN_CPAREN && l->token != TOKEN_END) {
-//         Expr *rhs = parse_primary(l);
-//         if (!rhs) return NULL;
-//         lhs = app(lhs, rhs);
-//         if (!lexer_peek(l)) return NULL;
-//     }
-//     return lhs;
-// }
-//
-// typedef struct {
-//     const char *name;
-//     const char *signature;
-//     const char *description;
-// } Command;
-//
-// typedef struct {
-//     Command *items;
-//     size_t count;
-//     size_t capacity;
-// } Commands;
-//
-// bool command(Commands *commands, const char *input, const char *name, const char *signature, const char *description)
-// {
-//     Command command = {
-//         .name        = name,
-//         .signature   = signature,
-//         .description = description,
-//     };
-//     da_append(commands, command);
-//     while (*input && *name && *input == *name) {
-//         input++;
-//         name++;
-//     }
-//     return *input == '\0';
-// }
-//
-// void print_available_commands(Commands *commands)
-// {
-//     printf("Available commands:\n");
-//     int max_name_width = 0;
-//     int max_sig_width = 0;
-//     for (size_t i = 0; i < commands->count; ++i) {
-//         Command command = commands->items[i];
-//         int name_width = strlen(command.name);
-//         int sig_width  = strlen(command.signature);
-//         if (name_width > max_name_width) max_name_width = name_width;
-//         if (sig_width  > max_sig_width)  max_sig_width  = sig_width;
-//     }
-//     for (size_t i = 0; i < commands->count; ++i) {
-//         Command command = commands->items[i];
-//         printf("  :%-*s %-*s - %s\n",
-//                max_name_width, command.name,
-//                max_sig_width,  command.signature,
-//                command.description);
-//     }
-// }
-//
+const Command = struct {
+    name: []const u8,
+    signature: []const u8,
+    description: []const u8,
+};
+
+const Commands = struct {
+    commands: std.ArrayList(Command) = .empty,
+
+    pub const init: Commands = .{};
+
+    pub fn deinit(self: *Commands, gpa: Allocator) void {
+        self.commands.deinit(gpa);
+    }
+
+    pub fn addAndMatch(self: *Commands, gpa: Allocator, input: []const u8, name: []const u8, signature: []const u8, description: []const u8) !bool {
+        const command: Command = .{
+            .name = name,
+            .signature = signature,
+            .description = description,
+        };
+
+        try self.commands.append(gpa, command);
+        return std.mem.eql(u8, input, name);
+    }
+
+    pub fn format(
+        self: Commands,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        try writer.writeAll("Available commands:\n");
+        var max_name_width: usize = 0;
+        var max_sig_width: usize = 0;
+        for (self.commands.items) |command| {
+            max_name_width = @max(max_name_width, command.name.len);
+            max_sig_width = @max(max_sig_width, command.signature.len);
+        }
+
+        for (self.commands.items) |command| {
+            try writer.print("  :{[n]s: <[nw]} {[s]s: <[sw]} - {[d]s}\n", .{
+                .n = command.name,
+                .nw = max_name_width,
+                .s = command.signature,
+                .sw = max_sig_width,
+                .d = command.description,
+            });
+        }
+    }
+};
+
 // int main(void)
 // {
 //     static char buffer[1024];
@@ -1063,6 +991,11 @@ pub fn main() !void {
     const input = &stdin.interface;
     const output = &lambda_writer.interface;
 
+    var commands: Commands = .init;
+    defer commands.deinit(gpa);
+
+    var limit: u32 = 10;
+
     var expr_arena: std.heap.ArenaAllocator = .init(gpa);
     defer expr_arena.deinit();
     const expr_gpa = expr_arena.allocator();
@@ -1076,6 +1009,50 @@ pub fn main() !void {
         defer _ = expr_arena.reset(.retain_capacity);
         var l: Lexer = .init(gpa, null, line);
 
+        if (!l.peek()) continue;
+        if (l.token == .end) continue;
+        if (l.token == .colon) {
+            if (!l.next()) continue;
+            if (!l.expect(.name)) continue;
+            // Commands
+            commands.commands.clearRetainingCapacity();
+            if (try commands.addAndMatch(gpa, l.name, "limit", "[number]", "change evaluation limit (0 for no limit; if number is omitted, print current limit)")) {
+                if (!l.peek()) continue;
+                switch (l.token) {
+                    .name => {
+                        if (!l.expect(.name)) continue;
+                        limit = try std.fmt.parseInt(u32, l.name, 10);
+                        if (limit != 0) {
+                            std.debug.print("Set evaluation limit to {d}\n", .{limit});
+                        } else {
+                            std.debug.print("Disabled evaluation limit\n", .{});
+                        }
+                        continue;
+                    },
+                    .end => {
+                        if (limit != 0) {
+                            std.debug.print("Evaluation limit is {d}\n", .{limit});
+                        } else {
+                            std.debug.print("Evaluation limit is disabled\n", .{});
+                        }
+                        continue;
+                    },
+                    else => {
+                        std.debug.print("{f}error: unexpected token '{f}'\n", .{ std.fmt.alt(l, .printLoc), l.token });
+                        continue;
+                    },
+                }
+            }
+            if (try commands.addAndMatch(gpa, l.name, "quit", "", "quit the REPL")) break;
+            if (try commands.addAndMatch(gpa, l.name, "help", "", "print this help message")) {
+                std.debug.print("{f}\n", .{commands});
+                continue;
+            }
+            std.debug.print("{f}\n", .{commands});
+            std.debug.print("error: unknown command '{s}'\n", .{l.name});
+            continue;
+        }
+
         var expr = parse_expr(expr_gpa, &l) orelse {
             std.debug.print("-> <null>\n", .{});
             continue;
@@ -1083,7 +1060,6 @@ pub fn main() !void {
         _ = bind_variables(expr);
         std.debug.print("-> {f}\n", .{expr});
 
-        const limit = 20;
         var i: usize = 0;
         var expr1 = eval1(expr_gpa, expr);
         while ((limit == 0 or i < limit) and expr1 != expr) : (i += 1) {
